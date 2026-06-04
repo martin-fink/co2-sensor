@@ -1,29 +1,30 @@
 mod boot_animation;
 
+use crate::config;
+use crate::config::AirQuality;
+use crate::display::boot_animation::BootAnimation;
+use crate::history::History;
+use crate::state::{MEASUREMENT, STATE, State};
 use core::fmt::Write as _;
 use core::sync::atomic::Ordering;
 use display_interface::{AsyncWriteOnlyDataCommand, DisplayError};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics::{
     mono_font::{
         MonoTextStyle,
-        iso_8859_1::{FONT_6X10, FONT_9X18, FONT_10X20},
+        iso_8859_1::{FONT_4X6, FONT_6X10, FONT_9X18, FONT_10X20},
     },
     pixelcolor::BinaryColor,
     prelude::*,
-    primitives::{PrimitiveStyle, Rectangle},
+    primitives::{Line, PrimitiveStyle, Rectangle},
     text::{Alignment, Baseline, Text, TextStyleBuilder},
 };
 use esp_hal::Async;
 use esp_hal::i2c::master::I2c;
 use scd4x::types::SensorData;
 use ssd1306::{I2CDisplayInterface, Ssd1306Async, mode::BufferedGraphicsModeAsync, prelude::*};
-
-use crate::config::AirQuality;
-use crate::display::boot_animation::BootAnimation;
-use crate::state::{MEASUREMENT, STATE, State};
 
 #[embassy_executor::task]
 pub async fn display_task(i2c: I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>) -> ! {
@@ -87,38 +88,30 @@ pub async fn display_task(i2c: I2cDevice<'static, NoopRawMutex, I2c<'static, Asy
         Timer::after(Duration::from_millis(120)).await;
     }
 
+    let mut history = History::new();
+
     loop {
         // Blocks until the sensor task publishes a fresh reading.
         let m = MEASUREMENT.wait().await;
-        draw_measurement(&mut display, &m).await.unwrap();
+        history.push(m.co2, Instant::now());
+        draw_measurement(&mut display, &m, &history).await.unwrap();
     }
 }
 
-/// Renders a measurement to the OLED. The CO2 reading drives a glanceable air-
-/// quality cue ([`AirQuality`]): a border when ventilation is recommended, and a
-/// border plus inverted colors when air quality is poor.
-///
-/// ```text
-///        ┌──────────────────────────┐   border drawn when Ventilate/Poor
-///        │                          │   (colors inverted when Poor)
-///        │        823 ppm           │   big value + small "ppm" unit
-///        │                          │
-///        │   21.4°C        47 %     │   temperature | humidity (bigger)
-///        │                          │
-///        └──────────────────────────┘
-/// ```
+/// Renders a measurement to the OLED: current CO2 value on the left, an outlined
+/// history graph on the right. The reading also drives a glanceable air-quality
+/// cue ([`AirQuality`]): a border when ventilation is recommended, and a border
+/// plus inverted colors when air quality is poor.
 async fn draw_measurement<DI>(
     display: &mut Ssd1306Async<DI, DisplaySize128x64, BufferedGraphicsModeAsync<DisplaySize128x64>>,
     m: &SensorData,
+    hist: &History,
 ) -> Result<(), DisplayError>
 where
     DI: AsyncWriteOnlyDataCommand,
 {
     const MARGIN: i32 = 6;
-    // Glyph widths of the mono fonts used below.
-    const BIG_W: i32 = 10; // FONT_10X20
-    const UNIT_W: i32 = 6; // FONT_6X10
-    const UNIT_GAP: i32 = 4;
+    const BIG_W: i32 = 10; // FONT_10X20 glyph width
     const BORDER_W: u32 = 2;
 
     let quality = AirQuality::from_co2(m.co2);
@@ -131,6 +124,7 @@ where
         AirQuality::Good | AirQuality::Ventilate => (BinaryColor::On, BinaryColor::Off),
     };
 
+    let tiny = MonoTextStyle::new(&FONT_4X6, fg);
     let small = MonoTextStyle::new(&FONT_6X10, fg);
     let big = MonoTextStyle::new(&FONT_10X20, fg);
     let row = MonoTextStyle::new(&FONT_9X18, fg);
@@ -145,21 +139,25 @@ where
             .draw(display)?;
     }
 
-    // CO2 hero value with a small "ppm" unit to its right. The number + unit are
-    // measured and centered as a group so the layout stays balanced as the digit
-    // count changes (e.g. "823" vs "1024").
-    let mut buf = heapless::String::<16>::new();
-    write!(buf, "{}", m.co2).unwrap();
-    const UNIT: &str = "ppm";
-    let num_w = buf.len() as i32 * BIG_W;
-    let group_w = num_w + UNIT_GAP + UNIT.len() as i32 * UNIT_W;
-    let num_x = 64 - group_w / 2;
-    let baseline_y = 28;
+    // --- Upper left: "CO2" label above the current value ---
 
+    // Label "CO" (small) with a subscript "2" (tiny, dropped to the baseline).
+    let label_x = MARGIN;
+    let label_y = MARGIN * 2;
     Text::with_text_style(
-        buf.as_str(),
-        Point::new(num_x, baseline_y),
-        big,
+        "CO",
+        Point::new(label_x + 2, label_y),
+        small,
+        TextStyleBuilder::new()
+            .baseline(Baseline::Bottom)
+            .alignment(Alignment::Left)
+            .build(),
+    )
+    .draw(display)?;
+    Text::with_text_style(
+        "2",
+        Point::new(label_x + 2 * 7, label_y),
+        tiny,
         TextStyleBuilder::new()
             .baseline(Baseline::Bottom)
             .alignment(Alignment::Left)
@@ -167,10 +165,31 @@ where
     )
     .draw(display)?;
 
-    // Unit sits on the number's baseline so it reads as a subscript-style label.
+    // Current CO2 value (big).
+    let mut buf = heapless::String::<16>::new();
+    write!(buf, "{}", m.co2).unwrap();
+
+    const UNIT_GAP: i32 = 8;
+    const UNIT: &str = "ppm";
+
+    let num_w = buf.len() as i32 * BIG_W;
+    // let num_x = 64 - group_w / 2;
+    let baseline_y = 28;
+
+    Text::with_text_style(
+        buf.as_str(),
+        Point::new(MARGIN, 31),
+        big,
+        TextStyleBuilder::new()
+            .baseline(Baseline::Bottom)
+            .alignment(Alignment::Left)
+            .build(),
+    )
+    .draw(display)?;
+    // `ppm` sits on the number's baseline so it reads as a subscript-style label.
     Text::with_text_style(
         UNIT,
-        Point::new(num_x + num_w + UNIT_GAP, baseline_y),
+        Point::new(num_w + UNIT_GAP, baseline_y),
         small,
         TextStyleBuilder::new()
             .baseline(Baseline::Bottom)
@@ -179,8 +198,28 @@ where
     )
     .draw(display)?;
 
-    // Bottom row: temperature on the left, humidity on the right. Both share the
-    // same top baseline so the two values line up horizontally.
+    // --- Upper right: outlined history graph ---
+    // Sized to fill the upper-right, clear of the value.
+    let gx = MARGIN + (4 + 2) * BIG_W + 4;
+    let graph = Rectangle::new(
+        Point::new(gx, MARGIN),
+        Size::new((128 - MARGIN - gx) as u32, (31 - MARGIN) as u32),
+    );
+    draw_graph(display, hist, graph, fg)?;
+
+    // --- Bottom row: temperature on the left, humidity on the right ---
+
+    Text::with_text_style(
+        "Temp",
+        Point::new(label_x + 2, ROW_Y),
+        small,
+        TextStyleBuilder::new()
+            .baseline(Baseline::Bottom)
+            .alignment(Alignment::Left)
+            .build(),
+    )
+    .draw(display)?;
+
     const ROW_Y: i32 = 44;
     buf.clear();
     write!(buf, "{:.1}\u{00b0}C", m.temperature).unwrap();
@@ -191,6 +230,17 @@ where
         TextStyleBuilder::new()
             .baseline(Baseline::Top)
             .alignment(Alignment::Left)
+            .build(),
+    )
+    .draw(display)?;
+
+    Text::with_text_style(
+        "Humidity",
+        Point::new(128 - MARGIN, ROW_Y),
+        small,
+        TextStyleBuilder::new()
+            .baseline(Baseline::Bottom)
+            .alignment(Alignment::Right)
             .build(),
     )
     .draw(display)?;
@@ -209,5 +259,77 @@ where
     .draw(display)?;
 
     display.flush().await?;
+    Ok(())
+}
+
+/// Draws the history as an outlined sparkline filling `rect`: a 1px border with
+/// one vertical bar per retained point inside, scaled over a fixed ppm range.
+fn draw_graph<D>(
+    display: &mut D,
+    hist: &History,
+    rect: Rectangle,
+    fg: BinaryColor,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    const PPM_MIN: i32 = 400;
+    const PPM_MAX: i32 = 2000;
+
+    rect.into_styled(PrimitiveStyle::with_stroke(fg, 1))
+        .draw(display)?;
+
+    let len = hist.len() as i32;
+    if len == 0 {
+        return Ok(());
+    }
+
+    let full_len = config::HISTORY_POINTS as i32;
+    if full_len <= 0 {
+        return Ok(());
+    }
+
+    let ix = rect.top_left.x + 1;
+    let iy = rect.top_left.y + 1;
+    let iw = rect.size.width as i32 - 2;
+    let ih = rect.size.height as i32 - 2;
+
+    if iw <= 0 || ih <= 0 {
+        return Ok(());
+    }
+
+    let stroke = PrimitiveStyle::with_stroke(fg, 1);
+
+    // Shift current samples to the right.
+    // Example: full_len = 60, len = 10 => first sample starts at x index 50.
+    let start = full_len - len;
+
+    let mut prev: Option<Point> = None;
+
+    for (i, p) in hist.points_oldest_first().enumerate() {
+        let x_index = start + i as i32;
+
+        let x = if full_len == 1 {
+            ix
+        } else {
+            ix + (x_index * (iw - 1)) / (full_len - 1)
+        };
+
+        let clamped = (p as i32).clamp(PPM_MIN, PPM_MAX);
+
+        let y_offset = ((clamped - PPM_MIN) * (ih - 1)) / (PPM_MAX - PPM_MIN);
+        let y = iy + ih - 1 - y_offset;
+
+        let current = Point::new(x, y);
+
+        if let Some(prev) = prev {
+            Line::new(prev, current).into_styled(stroke).draw(display)?;
+        } else {
+            Pixel(current, fg).draw(display)?;
+        }
+
+        prev = Some(current);
+    }
+
     Ok(())
 }

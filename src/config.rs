@@ -10,6 +10,16 @@ pub const CO2_VENTILATE: u16 = 1000;
 /// display draws the border *and* inverts the colors for a stronger alert.
 pub const CO2_POOR: u16 = 1500;
 
+/// Number of points retained for the history graph / average / trend.
+pub const HISTORY_POINTS: usize = 60;
+
+/// Seconds of readings averaged into each history point.
+/// `HISTORY_POINTS * HISTORY_BUCKET_SECS` is the total window.
+pub const HISTORY_BUCKET_SECS: u64 = 30;
+
+/// ppm change (vs. the trend baseline) below which the trend reads as steady.
+pub const TREND_DEADBAND: u16 = 30;
+
 /// Air quality bucket derived from a CO2 reading, used to drive the display cue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AirQuality {
