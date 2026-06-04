@@ -6,3 +6,4 @@ I use the following hardware:
 - 0.96" OLED display
 
 ![Picture of the sensor, screen and microcrontroller](./pictures/sensor.jpg)
+<small>please ignore bad soldering</small>
