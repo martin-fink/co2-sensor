@@ -8,7 +8,7 @@
 #![deny(clippy::large_stack_frames)]
 
 use co2_sensor::display;
-use co2_sensor::state::{I2C_BUS, STATE, State};
+use co2_sensor::state::{CHANNEL, I2C_BUS, SensorState};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_sync::mutex::Mutex;
@@ -21,7 +21,7 @@ use log::{error, info};
 #[panic_handler]
 fn panic(panic_info: &core::panic::PanicInfo) -> ! {
     error!("{}", panic_info);
-    STATE.set_state(State::Error);
+    CHANNEL.signal(SensorState::Error);
     loop {}
 }
 
@@ -76,6 +76,8 @@ async fn main(spawner: Spawner) -> ! {
 
     let bus = I2C_BUS.init(Mutex::new(i2c));
 
+    CHANNEL.signal(SensorState::Booting);
+
     spawner.spawn(display::display_task(I2cDevice::new(bus)).unwrap());
     #[cfg(not(feature = "debug-test-data"))]
     spawner.spawn(co2_sensor::sensor::sensor_task(I2cDevice::new(bus)).unwrap());
@@ -90,7 +92,7 @@ async fn main(spawner: Spawner) -> ! {
 #[cfg(feature = "debug-test-data")]
 #[embassy_executor::task]
 async fn debug_test_values() -> ! {
-    use co2_sensor::state::MEASUREMENT;
+    use co2_sensor::state::CHANNEL;
     use scd4x::types::SensorData;
 
     fn xorshift32(state: &mut i16) -> i16 {
@@ -102,27 +104,26 @@ async fn debug_test_values() -> ! {
         x
     }
 
-    STATE.set_state(State::Ready);
-    MEASUREMENT.signal(SensorData {
+    CHANNEL.signal(SensorState::Data(SensorData {
         co2: 900,
         temperature: 23.0,
         humidity: 39.0,
-    });
+    }));
     Timer::after(Duration::from_millis(500)).await;
-    MEASUREMENT.signal(SensorData {
+    CHANNEL.signal(SensorState::Data(SensorData {
         co2: 1000,
         temperature: 23.0,
         humidity: 39.0,
-    });
+    }));
 
     let mut co2 = 1000;
     let mut change = 10i16;
     loop {
-        MEASUREMENT.signal(SensorData {
+        CHANNEL.signal(SensorState::Data(SensorData {
             co2,
             temperature: 23.0,
             humidity: 39.0,
-        });
+        }));
         Timer::after(Duration::from_millis(500)).await;
         co2 = (co2 as i16 + xorshift32(&mut change) % 16) as u16;
     }

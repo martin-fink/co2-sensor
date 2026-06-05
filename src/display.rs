@@ -1,16 +1,15 @@
 mod boot_animation;
 
-use crate::config;
 use crate::air_quality::AirQuality;
+use crate::config;
 use crate::display::boot_animation::BootAnimation;
 use crate::history::History;
-use crate::state::{MEASUREMENT, STATE, State};
+use crate::state::{CHANNEL, SensorState};
 use core::fmt::Write as _;
-use core::sync::atomic::Ordering;
 use display_interface::{AsyncWriteOnlyDataCommand, DisplayError};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::Instant;
 use embedded_graphics::{
     mono_font::{
         MonoTextStyle,
@@ -38,64 +37,84 @@ pub async fn display_task(i2c: I2cDevice<'static, NoopRawMutex, I2c<'static, Asy
     display.flush().await.unwrap();
 
     let mut boot = BootAnimation::new();
-
-    loop {
-        match STATE.get_state() {
-            State::Booting => {
-                boot.draw(&mut display, "booting").unwrap();
-            }
-            State::SensorInit => {
-                boot.draw(&mut display, "starting sensor").unwrap();
-            }
-            State::SelfTest => {
-                display.clear(BinaryColor::Off).unwrap();
-                let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-                Text::with_alignment("Self Test", Point::new(64, 10), style, Alignment::Center)
-                    .draw(&mut display)
-                    .unwrap();
-
-                let alt = STATE.altitude.load(Ordering::Relaxed);
-                let asc = STATE.automatic_self_calibration.load(Ordering::Relaxed);
-                let temp_off = STATE.get_temp_offset();
-
-                let mut buf = heapless::String::<64>::new();
-                write!(buf, "Alt: {}m", alt).unwrap();
-                Text::with_alignment(buf.as_str(), Point::new(64, 26), style, Alignment::Center)
-                    .draw(&mut display)
-                    .unwrap();
-
-                buf.clear();
-                write!(buf, "ASC: {}", if asc { "on" } else { "off" }).unwrap();
-                Text::with_alignment(buf.as_str(), Point::new(64, 40), style, Alignment::Center)
-                    .draw(&mut display)
-                    .unwrap();
-
-                buf.clear();
-                write!(buf, "T offset: {}C", temp_off as i32).unwrap();
-                Text::with_alignment(buf.as_str(), Point::new(64, 54), style, Alignment::Center)
-                    .draw(&mut display)
-                    .unwrap();
-            }
-            State::WarmingUp => {
-                boot.draw(&mut display, "warmup").unwrap();
-            }
-            State::Ready => {
-                break;
-            }
-            State::Error => {}
-        }
-        display.flush().await.unwrap();
-        Timer::after(Duration::from_millis(120)).await;
-    }
-
     let mut history = History::new();
 
     loop {
-        // Blocks until the sensor task publishes a fresh reading.
-        let m = MEASUREMENT.wait().await;
-        history.push(m.co2, Instant::now());
-        draw_measurement(&mut display, &m, &history).await.unwrap();
+        let state = CHANNEL.wait().await;
+        match state {
+            SensorState::Booting => {
+                boot.draw(&mut display, "booting").unwrap();
+            }
+            SensorState::SensorInit => {
+                boot.draw(&mut display, "starting sensor").unwrap();
+            }
+            SensorState::SelfTest {
+                temp_offset,
+                altitude,
+                automatic_self_calibration,
+            } => {
+                draw_self_test(
+                    &mut display,
+                    temp_offset,
+                    altitude,
+                    automatic_self_calibration,
+                );
+            }
+            SensorState::WarmingUp => {
+                boot.draw(&mut display, "warmup").unwrap();
+            }
+            SensorState::Data(data) => {
+                history.push(data.co2, Instant::now());
+                draw_measurement(&mut display, &data, &history)
+                    .await
+                    .unwrap();
+            }
+            SensorState::Error => {}
+        }
+        display.flush().await.unwrap();
     }
+}
+
+fn draw_self_test<DI>(
+    display: &mut Ssd1306Async<DI, DisplaySize128x64, BufferedGraphicsModeAsync<DisplaySize128x64>>,
+    temp_offset: f32,
+    altitude: u16,
+    automatic_self_calibration: bool,
+) where
+    DI: AsyncWriteOnlyDataCommand,
+{
+    display.clear(BinaryColor::Off).unwrap();
+    let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    Text::with_alignment("Self Test", Point::new(64, 10), style, Alignment::Center)
+        .draw(display)
+        .unwrap();
+
+    let mut buf = heapless::String::<64>::new();
+    write!(buf, "Alt: {}m", altitude).unwrap();
+    Text::with_alignment(buf.as_str(), Point::new(64, 26), style, Alignment::Center)
+        .draw(display)
+        .unwrap();
+
+    buf.clear();
+    write!(
+        buf,
+        "ASC: {}",
+        if automatic_self_calibration {
+            "on"
+        } else {
+            "off"
+        }
+    )
+    .unwrap();
+    Text::with_alignment(buf.as_str(), Point::new(64, 40), style, Alignment::Center)
+        .draw(display)
+        .unwrap();
+
+    buf.clear();
+    write!(buf, "T offset: {:.1}C", temp_offset).unwrap();
+    Text::with_alignment(buf.as_str(), Point::new(64, 54), style, Alignment::Center)
+        .draw(display)
+        .unwrap();
 }
 
 /// Renders a measurement to the OLED: current CO2 value on the left, an outlined
