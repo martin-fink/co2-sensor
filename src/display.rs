@@ -1,7 +1,7 @@
 mod boot_animation;
 
 use crate::config;
-use crate::config::AirQuality;
+use crate::air_quality::AirQuality;
 use crate::display::boot_animation::BootAnimation;
 use crate::history::History;
 use crate::state::{MEASUREMENT, STATE, State};
