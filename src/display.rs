@@ -135,13 +135,7 @@ where
 
     let quality = AirQuality::from_co2(m.co2);
 
-    // Inverting for "poor" means swapping the foreground/background roles: the
-    // panel fills with On and everything is drawn in Off. The border uses the
-    // foreground color so it stays visible in both schemes.
-    let (fg, bg) = match quality {
-        AirQuality::Poor => (BinaryColor::Off, BinaryColor::On),
-        AirQuality::Good | AirQuality::Ventilate => (BinaryColor::On, BinaryColor::Off),
-    };
+    let (fg, bg) = (BinaryColor::On, BinaryColor::Off);
 
     let tiny = MonoTextStyle::new(&FONT_4X6, fg);
     let small = MonoTextStyle::new(&FONT_6X10, fg);
@@ -153,8 +147,13 @@ where
     // Border as the air-quality cue: drawn for Ventilate and Poor, omitted when
     // air is Good so a clean screen reads as "nothing to do".
     if matches!(quality, AirQuality::Ventilate | AirQuality::Poor) {
+        let width = match quality {
+            AirQuality::Good => 0,
+            AirQuality::Ventilate => BORDER_W,
+            AirQuality::Poor => BORDER_W * 2,
+        };
         Rectangle::new(Point::zero(), Size::new(128, 64))
-            .into_styled(PrimitiveStyle::with_stroke(fg, BORDER_W))
+            .into_styled(PrimitiveStyle::with_stroke(fg, width))
             .draw(display)?;
     }
 
