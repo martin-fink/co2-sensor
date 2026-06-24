@@ -19,9 +19,10 @@ pub async fn sensor_task(i2c: I2cDevice<'static, NoopRawMutex, I2c<'static, Asyn
     Timer::after(Duration::from_millis(20)).await;
 
     sensor.set_altitude(ALTITUDE).await.unwrap();
-    if let Some(asc) = AUTOMATIC_SELF_CALIBRATION {
-        sensor.set_automatic_self_calibration(asc).await.unwrap();
-    }
+    sensor
+        .set_automatic_self_calibration(AUTOMATIC_SELF_CALIBRATION)
+        .await
+        .unwrap();
     if let Some(temp_offset) = TEMP_OFFSET {
         sensor.set_temperature_offset(temp_offset).await.unwrap();
     }

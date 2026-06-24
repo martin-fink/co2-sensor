@@ -1,5 +1,5 @@
 pub const ALTITUDE: u16 = 500;
-pub const AUTOMATIC_SELF_CALIBRATION: Option<bool> = None;
+pub const AUTOMATIC_SELF_CALIBRATION: bool = false;
 pub const TEMP_OFFSET: Option<f32> = None;
 
 /// CO2 level (ppm) at and above which ventilation is recommended. The display
