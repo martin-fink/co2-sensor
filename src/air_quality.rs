@@ -5,9 +5,9 @@ use crate::config::{CO2_POOR, CO2_VENTILATE};
 pub enum AirQuality {
     /// Below [`CO2_VENTILATE`]: no special cue.
     Good,
-    /// At or above [`CO2_VENTILATE`]: border shown, open a window.
+    /// At or above [`CO2_VENTILATE`]: outlined window icon, open a window.
     Ventilate,
-    /// At or above [`CO2_POOR`]: border shown and colors inverted.
+    /// At or above [`CO2_POOR`]: filled window icon.
     Poor,
 }
 

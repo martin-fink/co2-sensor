@@ -20,8 +20,9 @@ use log::{error, info};
 
 #[panic_handler]
 fn panic(panic_info: &core::panic::PanicInfo) -> ! {
+    // The executor never runs again after this, so nothing can reach the
+    // display from here; recoverable errors are reported by the tasks instead.
     error!("{}", panic_info);
-    CHANNEL.signal(SensorState::Error);
     loop {}
 }
 

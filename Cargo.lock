@@ -109,7 +109,6 @@ name = "co2-sensor"
 version = "0.1.0"
 dependencies = [
  "critical-section",
- "display-interface",
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-sync 0.8.0",

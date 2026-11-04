@@ -3,11 +3,11 @@ pub const AUTOMATIC_SELF_CALIBRATION: bool = false;
 pub const TEMP_OFFSET: Option<f32> = None;
 
 /// CO2 level (ppm) at and above which ventilation is recommended. The display
-/// draws a border around the screen as a glanceable cue to open the window.
+/// shows an outlined window icon as a glanceable cue to open the window.
 pub const CO2_VENTILATE: u16 = 1000;
 
 /// CO2 level (ppm) at and above which air quality is considered poor. The
-/// display draws the border *and* inverts the colors for a stronger alert.
+/// display fills the window icon for a stronger alert.
 pub const CO2_POOR: u16 = 1500;
 
 /// Number of points retained for the history graph / average / trend.

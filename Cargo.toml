@@ -36,7 +36,6 @@ embedded-graphics = "0.8"
 
 heapless = "0.8"
 scd4x = { version = "0.5.0", features = ["embedded-hal-async", "scd41"] }
-display-interface = "0.5.0"
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
 [profile.dev]

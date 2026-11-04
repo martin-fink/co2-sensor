@@ -16,9 +16,17 @@ pub enum SensorState {
         altitude: u16,
         automatic_self_calibration: bool,
     },
-    WarmingUp,
+    /// Periodic measurement started; `self_test_ok` is false if the self test
+    /// failed, in which case readings are shown with a warning.
+    WarmingUp {
+        self_test_ok: bool,
+    },
     Data(SensorData),
-    Error,
+    /// A sensor step failed; the sensor task has stopped.
+    Error {
+        step: &'static str,
+        detail: heapless::String<96>,
+    },
 }
 
 pub static CHANNEL: Signal<CriticalSectionRawMutex, SensorState> = Signal::new();
